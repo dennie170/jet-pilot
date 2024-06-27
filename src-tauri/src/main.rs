@@ -7,7 +7,7 @@ use k8s_metrics::v1beta1::PodMetrics;
 use k8s_openapi::api::batch::v1::{CronJob, Job};
 use k8s_openapi::api::networking::v1::Ingress;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::{APIGroup, APIResource};
-use tauri::{AboutMetadata, CustomMenuItem, Manager, Menu, Submenu};
+use tauri::{AboutMetadata, CustomMenuItem, Manager, Menu, MenuEntry, MenuItem, Submenu};
 
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::{
@@ -20,12 +20,8 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::{
-    io::{BufRead, BufReader, Write},
-    sync::{Arc, Mutex},
-    thread::{self, sleep},
-    time::Duration,
-};
+use std::{fs, io::{BufRead, BufReader, Write}, sync::{Arc, Mutex}, thread::{self, sleep}, time::Duration};
+use tauri::api::path;
 use uuid::Uuid;
 
 #[derive(Serialize)]
@@ -87,16 +83,30 @@ impl From<KubeconfigError> for SerializableKubeError {
 static CURRENT_CONTEXT: Mutex<Option<String>> = Mutex::new(Some(String::new()));
 static CLIENT: Mutex<Option<Client>> = Mutex::new(None);
 
+fn get_kube_config(app_handle: tauri::AppHandle) -> Result<Kubeconfig, Error> {
+    let settings_file = app_handle.path_resolver().app_config_dir().unwrap().to_str().unwrap().to_string() + "/settings.json";
+    let user_dir = path::home_dir().unwrap().to_str().unwrap().to_string();
+    let json_string = fs::read_to_string(settings_file).expect("Unable to load file");
+    let json: serde_json::Value = serde_json::from_str(&json_string).expect("Unable to parse file");
+
+    let kubeconfig = json["client"]["currentKubeConfig"].as_str();
+    let fallback_config = (user_dir + "/.kube/config").to_string();
+
+    let file = if kubeconfig.is_none() || kubeconfig.unwrap().is_empty() { &fallback_config } else { kubeconfig.unwrap() };
+    let file = std::path::Path::new(&*file);
+    return Ok(Kubeconfig::read_from(&file).expect("Cannot load kubeconfig"))
+}
+
 #[tauri::command]
-async fn get_current_context() -> Result<String, SerializableKubeError> {
-    let config = Kubeconfig::read().map_err(|err| SerializableKubeError::from(err))?;
+async fn get_current_context(app_handle: tauri::AppHandle) -> Result<String, SerializableKubeError> {
+    let config = get_kube_config(app_handle).map_err(|err| SerializableKubeError::from(err))?;
 
     return Ok(config.current_context.expect("No current context"));
 }
 
 #[tauri::command]
-async fn list_contexts() -> Result<Vec<String>, SerializableKubeError> {
-    let config = Kubeconfig::read().map_err(|err| SerializableKubeError::from(err))?;
+async fn list_contexts(app_handle: tauri::AppHandle) -> Result<Vec<String>, SerializableKubeError> {
+    let config = get_kube_config(app_handle).map_err(|err| SerializableKubeError::from(err))?;
 
     config
         .contexts
@@ -109,8 +119,8 @@ async fn list_contexts() -> Result<Vec<String>, SerializableKubeError> {
 }
 
 #[tauri::command]
-async fn get_context_auth_info(context: &str) -> Result<NamedAuthInfo, SerializableKubeError> {
-    let config = Kubeconfig::read().map_err(|err| SerializableKubeError::from(err))?;
+async fn get_context_auth_info(app_handle: tauri::AppHandle, context: &str) -> Result<NamedAuthInfo, SerializableKubeError> {
+    let config = get_kube_config(app_handle).map_err(|err| SerializableKubeError::from(err))?;
 
     let context_auth_info = config
         .contexts
@@ -723,7 +733,7 @@ fn write_to_pty(session_id: &str, data: &str) {
     }
 }
 
-fn main() { 
+fn main() {
     let _ = fix_path_env::fix();
 
     let metadata = AboutMetadata::new()
@@ -732,12 +742,12 @@ fn main() {
         .license(String::from("MIT"));
 
     let submenu = Submenu::new(
-        "JET Pilot", 
+        "JET Pilot",
         Menu::new()
             .add_native_item(
                 tauri::MenuItem::About(
-                    String::from("JET Pilot"), 
-                    metadata                
+                    String::from("JET Pilot"),
+                    metadata
                 )
             )
             .add_item(CustomMenuItem::new("check_for_updates", "Check for Updates..."))
@@ -818,6 +828,23 @@ fn main() {
 
             Ok(())
         })
+        .menu(Menu::with_items([
+           #[cfg(target_os = "macos")]
+           MenuEntry::Submenu(Submenu::new(
+               "Edit",
+               Menu::with_items([
+                   MenuItem::Undo.into(),
+                   MenuItem::Redo.into(),
+                   MenuItem::Separator.into(),
+                   MenuItem::Cut.into(),
+                   MenuItem::Copy.into(),
+                   MenuItem::Paste.into(),
+                   #[cfg(not(target_os = "macos"))]
+                   MenuItem::Separator.into(),
+                   MenuItem::SelectAll.into(),
+               ]),
+           )),
+        ]))
         .run(ctx)
         .expect("Error while starting JET Pilot");
 }

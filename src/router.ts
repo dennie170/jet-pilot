@@ -26,6 +26,11 @@ const routes: Array<RouteRecordRaw> = [
         name: "SettingsClusters",
         component: () => import("./views/settings/Clusters.vue"),
       },
+      {
+        path: "kubeclient",
+        name: "KubeClient",
+        component: () => import("./views/settings/KubeClient.vue"),
+      },
     ],
   },
   {

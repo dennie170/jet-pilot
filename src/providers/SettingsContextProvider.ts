@@ -34,6 +34,9 @@ export interface SettingsContextState {
     updates: {
       checkOnStartup: boolean;
     };
+    client: {
+      currentKubeConfig?: string | null
+    }
   };
 }
 
@@ -60,6 +63,9 @@ export default {
         updates: {
           checkOnStartup: true,
         },
+        client: {
+          currentKubeConfig: null,
+        }
       },
     });
     provide(SettingsContextStateKey, toRefs(state));
@@ -90,7 +96,9 @@ export default {
       save();
     });
   },
-  render(): any {
+  render(): never {
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
     return this.$slots.default();
   },
 };
